@@ -1,0 +1,105 @@
+import asyncio
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+
+# --- НАСТРОЙКИ (замени эти 3 строки) ---
+TOKEN = "СЮДА_ТВОЙ_ТОКЕН"  # Тот, что от BotFather
+CHANNEL_ID = "@highrise_ankety"  # Твой канал
+MODERATOR_ID = 7843268764  # Твой ID (скопируй отсюда)
+# --- Конец настроек ---
+
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+
+user_data = {}
+
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    await message.answer(
+        "💖 Привет! Добро пожаловать в Highrise знакомства!\n\n"
+        "Здесь ты сможешь найти друзей по игре, крутую команду или даже вторую половинку 🥰\n\n"
+        "Чтобы заполнить анкету, нажми кнопку ниже.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Начать анкету 🚀", callback_data="start_profile")]
+            ]
+        )
+    )
+
+@dp.callback_query(lambda c: c.data == "start_profile")
+async def start_profile(callback: types.CallbackQuery):
+    await callback.message.edit_text("Шаг 1 из 3. Пришли скриншот своего аватара в Highrise 📸")
+    user_data[callback.from_user.id] = {}
+    await callback.answer()
+
+@dp.message(lambda message: message.photo and message.from_user.id in user_data and "avatar" not in user_data[message.from_user.id])
+async def get_avatar(message: types.Message):
+    user_data[message.from_user.id]["avatar"] = message.photo[-1].file_id
+    await message.answer("Шаг 2 из 3. Хочешь добавить своё реальное фото? Если да — пришли, если нет — напиши «нет» 💫")
+
+@dp.message(lambda message: message.from_user.id in user_data and "avatar" in user_data[message.from_user.id] and "realfoto" not in user_data[message.from_user.id])
+async def get_realfoto(message: types.Message):
+    if message.photo:
+        user_data[message.from_user.id]["realfoto"] = message.photo[-1].file_id
+    else:
+        user_data[message.from_user.id]["realfoto"] = message.text
+    await message.answer("Шаг 3 из 3. Напиши немного о себе: имя, возраст, что ищешь в игре ✍️")
+
+@dp.message(lambda message: message.from_user.id in user_data and "realfoto" in user_data[message.from_user.id] and "about" not in user_data[message.from_user.id])
+async def get_about(message: types.Message):
+    data = user_data[message.from_user.id]
+    data["about"] = message.text
+    await message.answer("✅ Анкета собрана! Отправлено на модерацию.")
+
+    await bot.send_message(
+        MODERATOR_ID,
+        f"📝 Новая анкета!\n"
+        f"👤 Юзер: @{message.from_user.username or 'нет'}\n"
+        f"📝 О себе: {data['about']}"
+    )
+    await bot.send_photo(MODERATOR_ID, data["avatar"], caption="Аватар")
+    if data["realfoto"] != "нет":
+        await bot.send_photo(MODERATOR_ID, data["realfoto"], caption="Реальное фото")
+    else:
+        await bot.send_message(MODERATOR_ID, "Реальное фото: не указано")
+
+    await bot.send_message(
+        MODERATOR_ID,
+        "Одобрить анкету?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_{message.from_user.id}"),
+                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{message.from_user.id}")
+                ]
+            ]
+        )
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("approve_"))
+async def approve_profile(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    data = user_data.get(user_id)
+    if not data:
+        await callback.message.edit_text("Ошибка: анкета не найдена.")
+        return
+
+    await bot.send_photo(CHANNEL_ID, data["avatar"], caption=f"📝 Новая анкета!\n👤 Юзер: @{user_id}\n📝 {data['about']}")
+    if data["realfoto"] != "нет":
+        await bot.send_photo(CHANNEL_ID, data["realfoto"])
+    await callback.message.edit_text("✅ Анкета опубликована в канале!")
+
+@dp.callback_query(lambda c: c.data.startswith("reject_"))
+async def reject_profile(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    await bot.send_message(user_id, "❌ Ваша анкета была отклонена модератором.")
+    await callback.message.edit_text("❌ Анкета отклонена.")
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
